@@ -1,0 +1,446 @@
+---
+title: "Heart Disease Iterative Regression"
+author: "Esteban Salazar"
+date: "2024-09-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ROCR)
+library(randomForest)
+library(MASS)
+library(e1071)
+library(mi)
+library(ggplot2)
+```
+
+# Imputation of Data
+```{r}
+disease <- read.csv("C:/Users/esteb/iCloudDrive/Downloads/heartdisease1 copy.csv")
+```
+
+Check the data
+```{r}
+str(disease)
+print(paste( "The original dimensions: " , dim(disease), "The dimensions without the missing data: ", dim(na.omit(disease))))
+```
+
+Create a missing data frame
+```{r}
+mdf <- missing_data.frame(disease, favor_ordered = FALSE, favor_positive = TRUE)
+show(mdf)
+```
+
+Change the transformations to the identity
+```{r}
+mdf <- change(mdf, y = c("age", "trestbps", "chol", "thalach", "oldpeak"), what = "transformation", to = rep("identity", 5))
+show(mdf)
+```
+Histogram
+
+```{r}
+hist(mdf)
+```
+
+Imputations
+```{r warning=FALSE}
+imputations <- mi(mdf, n.iter = 30, n.chains = 4, max.minutes = Inf, seed = NA,verbose = TRUE)
+show(imputations)
+```
+
+Check for about constant mean across each chain(Looks good)
+```{r}
+mipply(imputations, mean, to.matrix = TRUE)
+```
+
+Check for a convergence diagnostic near 1. 
+```{r}
+Rhats(imputations)
+```
+Run 5 more iterations
+```{r warning=FALSE}
+imputations <- mi(imputations, n.iter = 5)
+```
+
+Visualize
+```{r}
+plot(imputations)
+```
+
+Complete the data
+```{r}
+itereg_disease <- complete(imputations, m = 1)
+str(itereg_disease)
+dim(na.omit(itereg_disease))
+```
+We only want the first fourteen features in our analysis, thus we will remove the unnecessary data from our analysis
+```{r}
+# This is the data set we will download as each time we run iterative regression we will get new inputs
+Data <- itereg_disease[,-c(15:22)]
+```
+
+
+
+## Re-Downloading Dataset
+```{r}
+Data <- read.csv("C:/Users/esteb/Documents/Iterative_Regression_Disease.csv")
+```
+
+```{r}
+Data[,2] <- as.factor(Data[,2])
+Data[,3] <- as.factor(Data[,3])
+Data[,6] <- as.factor(Data[,6])
+Data[,7] <- as.factor(Data[,7])
+Data[,9] <- as.factor(Data[,9])
+Data[,11] <- as.factor(Data[,11])
+Data[,13] <- as.factor(Data[,13])
+Data[,14] <- as.factor(Data[,14])
+```
+
+
+# Visualization of necessary parameters
+```{r}
+par(mfrow = c(2,3))
+xlabel = "Heart Disease"
+boxplot(age~heartdisease, data = Data, col = c("darkgreen", "darkred"), main = "Heart Disease by age", xlab = xlabel)
+boxplot(trestbps~heartdisease, data = disease, col = c("darkgreen", "darkred"), main = "Hear Disease by trestbps", xlab = xlabel) # Kinda different
+boxplot(chol~heartdisease, data = Data, col = c("darkgreen", "darkred"), main = "Heart Disease by chol", xlab = xlabel) # Not very different
+boxplot(thalach~heartdisease, data = Data, col = c("darkgreen", "darkred"), main = "Heart Disease by thalach", xlab = xlabel)
+boxplot(oldpeak~heartdisease, data = Data, col = c("darkgreen", "darkred"), main = "Heart Disease by oldpeak", xlab = xlabel)
+boxplot(ca~heartdisease, data = Data, col = c("darkgreen", "darkred"), main = "Heart Disease by ca", xlab = xlabel)
+```
+
+```{r}
+# Barplot by Sex
+colors = c('pink', 'lightblue')
+ggplot(Data, aes(x=heartdisease, fill = sex)) +
+  geom_bar(position = 'dodge', width = 0.5, alpha = 0.7) +
+  scale_fill_manual(label = c("Female: 0", "Male: 1"),values=colors) +
+  labs(x= 'Heart Disease', y= "Frequency") +
+  ggtitle("Presence of Heart Disease by Sex") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=18, face='bold'),
+    axis.text = element_text(size=12),
+    axis.title = element_text(size=14, face='bold'),
+    legend.title = element_text(size=12)
+  )
+
+```
+
+```{r}
+# Barplot by Chest Pain cp
+colors = c('darkgreen', 'green', 'grey', 'red')
+ggplot(Data, aes(x=heartdisease, fill = cp)) +
+  geom_bar(position = 'dodge', width = 0.5, alpha = 0.7) +
+  scale_fill_manual(label = c("Typical: 1", "Atypical: 2", "Non-anginal: 3", "Asymptomatic: 4"),values=colors) +
+  labs(x= 'Heart Disease', y= "Frequency") +
+  ggtitle("Presence of Heart Disease by Chest Pain") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=18, face='bold'),
+    axis.text = element_text(size=12),
+    axis.title = element_text(size=14, face='bold'),
+    legend.title = element_text(size=12)
+  )
+```
+```{r}
+colors = c('black', 'grey')
+ggplot(Data, aes(x=heartdisease, fill = fbs)) +
+  geom_bar(position = 'dodge', width = 0.5, alpha = 0.7) +
+  scale_fill_manual(label = c("False: 0", "True: 1"),values=colors) +
+  labs(x= 'Heart Disease', y= "Frequency") +
+  ggtitle("Presence of Heart Disease by High Fasting Blood Sugar") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=18, face='bold'),
+    axis.text = element_text(size=12),
+    axis.title = element_text(size=14, face='bold'),
+    legend.title = element_text(size=12)
+  )
+```
+
+```{r}
+colors = c('green', 'grey', 'red')
+ggplot(Data, aes(x=heartdisease, fill = restecg)) +
+  geom_bar(position = 'dodge', width = 0.5, alpha = 0.7) +
+  scale_fill_manual(label = c("Normal: 0", "Abnormal: 1", "Definite Hypertrophy: 2"),values=colors) +
+  labs(x= 'Heart Disease', y= "Frequency") +
+  ggtitle("Presence of Heart Disease by ECG") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=18, face='bold'),
+    axis.text = element_text(size=12),
+    axis.title = element_text(size=14, face='bold'),
+    legend.title = element_text(size=12)
+  )
+```
+
+```{r}
+colors = c('black','grey')
+ggplot(Data, aes(x=heartdisease, fill = exang)) +
+  geom_bar(position = 'dodge', width = 0.5, alpha = 0.7) +
+  scale_fill_manual(label = c("No: 0", "Yes: 1"),values=colors) +
+  labs(x= 'Heart Disease', y= "Frequency") +
+  ggtitle("Presence of Heart Disease by Excerise Induced Angina") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=18, face='bold'),
+    axis.text = element_text(size=12),
+    axis.title = element_text(size=14, face='bold'),
+    legend.title = element_text(size=12)
+  )
+```
+```{r}
+colors = c('green', 'grey', 'red')
+ggplot(Data, aes(x=heartdisease, fill = slope)) +
+  geom_bar(position = 'dodge', width = 0.5, alpha = 0.7) +
+  scale_fill_manual(label = c("Upsloping: 1", "Flat: 2", "Downsloping: 3"),values=colors) +
+  labs(x= 'Heart Disease', y= "Frequency") +
+  ggtitle("Presence of Heart Disease by Slope of Peak Excercise") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=18, face='bold'),
+    axis.text = element_text(size=12),
+    axis.title = element_text(size=14, face='bold'),
+    legend.title = element_text(size=12)
+  )
+```
+
+```{r}
+colors = c('green', 'grey', 'red')
+ggplot(Data, aes(x=heartdisease, fill = thal)) +
+  geom_bar(position = 'dodge', width = 0.5, alpha = 0.7) +
+  scale_fill_manual(label = c("Normal: 3", "Fixed Defect: 6", "Reversable Defect: 7"),values=colors) +
+  labs(x= 'Heart Disease', y= "Frequency") +
+  ggtitle("Presence of Heart Disease by Chest Pain") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=18, face='bold'),
+    axis.text = element_text(size=12),
+    axis.title = element_text(size=14, face='bold'),
+    legend.title = element_text(size=12)
+  )
+```
+
+```{r}
+# Correlation Matrix
+cormat <- round(cor(Data[,-c(2,3,6,7,9,11,13, 14)]),4)
+
+# Remove the redundant data from lower triangle
+upper_tri <- function(cormat){
+  cormat[lower.tri(cormat)] <- NA
+  return(cormat)
+}
+
+# Making the heatmap
+upper_triangle <- upper_tri(cormat)
+library(reshape2)
+melted_cormat <- melt(upper_triangle, na.rm = TRUE)
+heatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill=value)) +
+  geom_tile(color="white")+
+  scale_fill_gradient2(low = 'red', high = 'green', mid='white',
+    midpoint = 0, limit=c(-1,1), space = 'Lab', name = "Pearson\nCorrelation") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle=45, vjust=1, size=12, hjust = 1))+
+  coord_fixed()
+
+# Adding the correlation coefficients
+heatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position.inside = c(0.6, 0.7),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+
+```
+
+```{r}
+set.seed(2024)
+samp <- sample(c(TRUE,FALSE), nrow(Data), replace=TRUE, prob = c(0.7,0.3))
+
+train <- Data[samp,]
+test <- Data[!samp,]
+```
+
+
+## Logistic Regression
+
+```{r}
+set.seed(2024)
+log.model <- glm(heartdisease~., data = train, family = binomial)
+```
+
+```{r}
+MASS::stepAIC(log.model, direction = "backward")
+```
+The final model does not have slope, chol, exang, age, and restecg.
+```{r}
+#Final model
+log.model <- glm(heartdisease~.-age -exang -slope -chol -restecg, data = train, family = binomial)
+```
+
+
+```{r}
+# Predicted probability of being in class
+log.pred <- predict(log.model, newdata = test, type = "response") 
+log.class <- as.numeric(log.pred > 0.5)
+# Confusion Matrix
+(mat <- xtabs(~log.class + test$heartdisease))
+
+# Error rate
+(mat[1,2] + mat[2,1])/sum(mat)
+```
+About 23.66% error rate
+
+```{r}
+set.seed(1)
+log.pred <- predict(log.model, newdata = test)
+pred <- prediction(predictions = log.pred, labels = test$heartdisease)
+
+log.roc <- performance(pred, measure = "tpr", x.measure = "fpr")
+plot(log.roc, main = "(Iterative Regression) Logistic ROC")
+
+log_perf2 <- performance(pred, measure = "auc")
+log_perf2@y.values[[1]]
+```
+About 85.04%
+
+## Random Forest
+```{r}
+p <- ncol(train) - 1
+k <- 5
+ntree <- c(100, 200, 300, 400, 500, 600, 700, 800, 900, 1000)
+
+n <- 1:p 
+tuningpar <- expand.grid(n, ntree)
+cv.er.forest <- matrix(nrow = k, ncol = nrow(tuningpar))
+```
+
+
+## Cross Validation K-Fold Split
+```{r}
+set.seed(1)
+obs.per.fold <- ceiling(nrow(train)/k)
+shuffle.indices <- sample(nrow(train), nrow(train))
+folds <- vector("list", length = k)
+for (i in 1:k) {
+  if (i != k) { 
+    fold.indices <- (i - 1)*obs.per.fold + 1:obs.per.fold
+    folds[[i]] <- shuffle.indices[fold.indices]
+  } else {
+    fold.indices <- ((i - 1)*obs.per.fold + 1):nrow(train)
+    folds[[i]] <- shuffle.indices[fold.indices]
+  }
+}
+```
+
+
+## Testing for the two hyper parameters, ntrees && mtry.
+```{r warning=FALSE}
+set.seed(1)
+for (i in 1:k) {
+  cv.training <- train[-folds[[i]],]
+  cv.validation <- train[folds[[i]],]
+    for (j in 1:nrow(tuningpar)) {
+      rf <- randomForest(x = cv.training[,-14], y = cv.training[,14], mtry = tuningpar[j,1],
+      ntree = tuningpar[j,2])
+      rfpred <- predict(rf, newdata = cv.validation[,-14])
+      cv.er.forest[i,j] <- mean(rfpred != cv.validation[,14])
+    }
+}
+meancv <- colMeans(cv.er.forest)
+optimal <- tuningpar[which(meancv == min(meancv)),]
+names(optimal) <- c("# of var sampled", "# of Trees")
+optimal
+```
+We found that the optimal number for mtry is 4 and the number of trees is 500
+
+## Prediction based on the test case
+```{r}
+set.seed(2024)
+rand.forest <- randomForest(x = train[,-14], y = train[,14], mtry = 4, ntree = 500)
+
+#Predicted probability of being in class
+rand.pred <- predict(rand.forest, newdata = test[,-14], type = "prob")[,2]
+```
+
+## Random Forest Confusion Matrix
+```{r}
+rand.class <- predict(rand.forest, newdata = test[,-14], type = "response")
+(mat <- xtabs(~rand.class + test$heartdisease))
+(mat[1,2]+mat[2,1])/sum(mat) # Error rate
+```
+About 23.65%
+
+```{r}
+importance(rand.forest)
+varImpPlot(rand.forest, main = "Importance of Predictors")
+```
+We can see that thal is the most important factor, followed by cp
+
+## ROC and AUC Curves for random forest
+```{r}
+pred <- prediction(predictions = rand.pred, labels = test$heartdisease)
+
+rand.roc <- performance(pred, measure = "tpr", x.measure = "fpr")
+plot(rand.roc, main = "Random Forest ROC")
+log_perf2 <- performance(pred, measure = "auc")
+log_perf2@y.values[[1]]
+```
+About 86.69%
+
+# Chosen Method: SVM with polynomial kernel
+
+```{r}
+set.seed(2024)
+tune.out <- tune(svm, heartdisease~., data = train, kernel = "polynomial",ranges = list(cost = c(0.001, 0.01, 0.1, 1, 10, 100), degree = c(1,2,3,4)))
+summary(tune.out)
+best <- summary(tune.out)$best.model
+```
+
+
+```{r}
+svm.pred <- predict(best, newdata = test)
+(mat <- xtabs(~svm.pred + test$heartdisease))
+(mat[1,2] + mat[2,1])/sum(mat)
+```
+About 21.51%
+
+## ROC
+```{r}
+#Create the function
+rocplot<-function(predi,truth,...){
+predob<-prediction(predi,truth)
+perf<-performance(predob,"tpr","fpr")
+plot(perf,...)
+}
+```
+
+```{r}
+# Obtain the fitted values
+svm.fit <- svm(heartdisease~., data = train, kernel = "polynomial", degree = 1, cost = 10, decision.values=TRUE)
+fitted <- attributes(predict(svm.fit, newdata = test, decision.values=TRUE))$decision.values
+rocplot(-fitted, test$heartdisease, main = "Support Vector Machine ROC")
+```
+
+
+## AUC
+```{r}
+svm.fit <- svm(heartdisease~., data = train, kernel = "polynomial", degree = 1, cost = 10, probability=TRUE)
+prob <- attributes(predict(svm.fit, newdata = test, probability =TRUE))$probabilities[,2]
+
+predictionsvm <- prediction(prob,test$heartdisease)
+svm_perf2 <- performance(predictionsvm, measure = "auc")
+svm_perf2@y.values[[1]]
+```
+About 13.11%
